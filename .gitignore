@@ -1,0 +1,29 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# ---- Node ----
+node_modules/
+dist/
+.vite/
+*.local
+
+# ---- Secrets ----
+.env
+.env.*
+!.env.example
+
+# ---- Kaggle raw data (large, not committed) ----
+data/*
+!data/.gitkeep
+
+# ---- Editors / OS ----
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,51 @@
+/* ============================================================
+   Design tokens + base reset.
+   Severity colors are declared ONCE here and referenced by
+   SeverityBadge/ResultCard, so the palette can never drift.
+   ============================================================ */
+
+:root {
+  /* severity palette (assignment: Red=Critical, Yellow=Warning, Green=Normal) */
+  --sev-critical-bg:     #fef2f2;
+  --sev-critical-border: #dc2626;
+  --sev-critical-text:   #991b1b;
+
+  --sev-warning-bg:      #fffbeb;
+  --sev-warning-border:  #d97706;
+  --sev-warning-text:    #92400e;
+
+  --sev-normal-bg:       #f0fdf4;
+  --sev-normal-border:   #16a34a;
+  --sev-normal-text:     #166534;
+
+  /* neutrals */
+  --bg:        #f8fafc;
+  --surface:   #ffffff;
+  --border:    #e2e8f0;
+  --text:      #0f172a;
+  --text-muted:#64748b;
+
+  --radius: 10px;
+  --space:  16px;
+
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  line-height: 1.55;
+}
+
+.app { max-width: 960px; margin: 0 auto; padding: calc(var(--space) * 2); }
+
+.app__header { border-bottom: 1px solid var(--border); padding-bottom: var(--space); }
+.app__header h1 { margin: 0; font-size: 1.6rem; }
+.app__subtitle { margin: 4px 0 0; color: var(--text-muted); font-size: 0.95rem; }
+
+.app__main { padding-top: calc(var(--space) * 1.5); }
+.app__placeholder { color: var(--text-muted); }
