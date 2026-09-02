@@ -41,6 +41,23 @@ class Settings(BaseSettings):
     # --- Limits ---
     max_labs_per_request: int = 200
 
+    # --- Assistant (retrieval-augmented help widget) ---
+    # Separate from the classification pipeline on purpose: the assistant is an
+    # extra, and must never be able to affect how results are explained.
+    assistant_enabled: bool = True
+    ollama_base_url: str = "http://localhost:11434"
+    # An instruct model, not a reasoning one. qwen3:4b took 58-83s per answer
+    # on CPU and narrated its own thinking into the reply ("Looking at section
+    # [1]..."); qwen2.5:3b answers the same questions in 6-12s, cleanly.
+    ollama_chat_model: str = "qwen2.5:3b"
+    ollama_embed_model: str = "nomic-embed-text"
+    # How many chunks of context to put in front of the model. Three rather
+    # than five: prompt length is what costs time on CPU, and the answer is
+    # almost always in the top two matches anyway.
+    assistant_top_k: int = 3
+    # Below this cosine similarity a chunk is noise, not context.
+    assistant_min_score: float = 0.35
+
     @field_validator("llm_provider")
     @classmethod
     def _known_provider(cls, value: str) -> str:

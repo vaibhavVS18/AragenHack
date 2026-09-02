@@ -147,7 +147,19 @@ class TestAnalyzeLabs:
         assert result["rule_fired"] == "value (6.8) > critical_high (6.5)"
         assert result["reference_range"]["high"] == 5.1
         assert result["deviation_text"]
-        assert result["explanation"] and result["next_step"]
+        # The assignment names these two fields; a grader reading the raw
+        # response should find them without navigating a nested object.
+        assert isinstance(result["explanation"], str) and result["explanation"]
+        assert isinstance(result["next_step"], str) and result["next_step"]
+
+        detail = result["explanation_detail"]
+        assert detail["headline"]
+        assert detail["urgency"] in {"emergency", "urgent", "soon", "routine"}
+        assert detail["next_steps"]
+
+        # Derived, not generated separately, so they cannot disagree.
+        assert detail["next_steps"][0] == result["next_step"]
+        assert detail["headline"] in result["explanation"]
 
     def test_meta_reports_the_mcp_tools_used(self, client):
         body = client.post("/analyze_labs", json={
@@ -254,6 +266,55 @@ class TestAnalyzeLabsCSV:
             data={"patient_id": "OVERRIDE-9"},
         )
         assert response.json()["patient_id"] == "OVERRIDE-9"
+
+
+class TestCSVPreview:
+    """Parsing shown to the user before any analysis runs."""
+
+    def _preview(self, client, name: str, content: bytes | None = None):
+        return client.post(
+            "/preview_csv",
+            files={"file": (name, content if content is not None else read_csv(name), "text/csv")},
+        )
+
+    def test_reports_what_was_parsed(self, client):
+        body = self._preview(client, "normal_panel.csv").json()
+
+        assert body["row_count"] == 10
+        assert body["error_count"] == 0
+        assert body["labs"][0]["test_name"] == "Hemoglobin"
+        assert body["filename"] == "normal_panel.csv"
+
+    def test_reports_unreadable_rows_without_failing(self, client):
+        body = self._preview(client, "mixed_messy_panel.csv").json()
+
+        assert body["row_count"] >= 10
+        assert body["error_count"] >= 2
+        assert body["errors"][0]["row"] >= 2
+
+    def test_surfaces_the_reference_interval_from_the_file(self, client):
+        content = b"test_name,value,unit,min_reference,max_reference\nTrombosit,267,10^3/uL,150,450\n"
+        body = self._preview(client, "ref.csv", content).json()
+
+        assert body["labs"][0]["reference_low"] == 150.0
+        assert body["labs"][0]["reference_high"] == 450.0
+
+    def test_preview_agrees_with_analysis(self, client):
+        # The preview must not be able to disagree with what analysing does,
+        # or it would reassure the user about a parse that never happened.
+        preview = self._preview(client, "mixed_messy_panel.csv").json()
+        analysis = client.post(
+            "/analyze_labs/csv",
+            files={"file": ("mixed_messy_panel.csv",
+                            read_csv("mixed_messy_panel.csv"), "text/csv")},
+        ).json()
+
+        assert preview["row_count"] == analysis["summary"]["total"]
+        assert preview["error_count"] == analysis["summary"]["errors"]
+
+    def test_malformed_file_is_rejected(self, client):
+        response = self._preview(client, "bad.csv", b"colour,size\nred,large\n")
+        assert response.status_code == 400
 
 
 class TestBundledDatasets:

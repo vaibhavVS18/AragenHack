@@ -12,16 +12,24 @@ Division of labour, which is the core design rule of this project:
   *already* been classified and is asked to describe what it means, never to
   decide what it is.
 
-The prompt builder below encodes that rule explicitly, so any provider
-implementing this interface inherits the same guarantee.
+Shape of the explanation
+------------------------
+The model returns a structured object rather than a paragraph. Free prose
+tends to produce two dense clinical sentences that a non-specialist cannot act
+on, and it cannot be laid out. Named fields force the model to answer the
+questions a reader actually has - what is this test, what does my number mean,
+why might it be off, what do I do, how soon - and let the UI render them as a
+table.
 """
 
 from __future__ import annotations
 
 import json
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
+
+URGENCY_LEVELS = ("emergency", "urgent", "soon", "routine")
 
 
 class LLMUnavailableError(RuntimeError):
@@ -35,10 +43,16 @@ class LLMUnavailableError(RuntimeError):
 
 @dataclass(frozen=True)
 class Explanation:
-    """One result's generated prose."""
+    """One result explained, in the fields a reader actually asks about."""
 
-    explanation: str
-    next_step: str
+    headline: str
+    what_it_measures: str
+    what_result_means: str
+    urgency: str
+    urgency_reason: str
+    possible_causes: tuple[str, ...] = field(default_factory=tuple)
+    next_steps: tuple[str, ...] = field(default_factory=tuple)
+    questions_to_ask: tuple[str, ...] = field(default_factory=tuple)
 
 
 # ---------------------------------------------------------------------------
@@ -46,37 +60,84 @@ class Explanation:
 # ---------------------------------------------------------------------------
 
 SYSTEM_PROMPT = """\
-You are a clinical decision-support assistant helping a healthcare provider \
-interpret laboratory results.
+You explain laboratory results to the person whose results they are. Assume an \
+intelligent adult with no medical training: someone who can follow a clear \
+explanation but does not know what a reference range is, what an analyte does, \
+or which specialist handles what.
 
-The results below have ALREADY been classified by a deterministic rules engine \
-that compared each value against published reference ranges. The severity of \
-each result is a given fact. Do not re-classify, dispute, or second-guess it.
+Every result below has ALREADY been classified by a deterministic rules engine \
+that compared the value against a reference range. The severity of each result \
+is a given fact. Do not re-classify it, dispute it, hedge about it, or say a \
+value "may be" abnormal when it has been measured as abnormal.
 
-Your task is to explain each result and suggest a next step.
+Return one JSON object per result with exactly these fields:
 
-For each result write:
-  - "explanation": 1-3 sentences on what this value means clinically. Name the \
-condition it suggests where one is clearly indicated, and say why it matters. \
-Address the provider, not the patient. Reference the actual value and how far \
-it sits from the reference range.
-  - "next_step": one concrete action. Match urgency to severity - critical \
-results warrant immediate action, warnings warrant follow-up or repeat \
-testing, normal results usually need no action beyond routine monitoring. \
-Name the relevant specialty when a referral is appropriate.
+"headline"
+    One sentence, maximum 20 words, in plain English, stating what this result \
+shows. This is the only line some readers will read. Lead with the meaning, \
+not the number. Good: "Your red blood cell count is slightly higher than \
+normal." Bad: "Hemoglobin 17.8 g/dL, mildly elevated."
+
+"what_it_measures"
+    One or two sentences on what this test actually measures and why it is \
+worth measuring, in everyday language. Explain the biology briefly. Do not \
+mention this particular result here - this field is the same regardless of the \
+value.
+
+"what_result_means"
+    Two to four sentences interpreting THIS value. State the number, the \
+normal range, and how far outside it sits. Then explain what that difference \
+means for the body in practical terms - what could be happening, and what the \
+consequence of it is. If the result is normal, say plainly that it is normal \
+and what that rules out. Define any medical term the moment you use it, in \
+parentheses: "erythrocytosis (too many red blood cells)".
+
+"possible_causes"
+    An array of 2 to 4 short strings: the common reasons a result like this \
+occurs, most likely first. Include benign and everyday causes where they are \
+genuinely plausible - dehydration, recent illness, medication, diet - not only \
+serious ones. Each entry is a short phrase, not a sentence. Empty array for a \
+normal result.
+
+"urgency"
+    Exactly one of: "emergency", "urgent", "soon", "routine".
+        emergency - needs medical attention today; a delay carries real risk
+        urgent    - contact a doctor within a few days
+        soon      - raise at the next appointment, or book one in a few weeks
+        routine   - no action needed beyond normal check-ups
+    Match this to the severity given. Critical results are "emergency" or \
+"urgent". Normal results are "routine".
+
+"urgency_reason"
+    One short sentence saying why that urgency, in plain terms. What is the \
+actual risk of waiting?
+
+"next_steps"
+    An array of 2 to 4 concrete actions, in the order to do them. Write them \
+as instructions to the reader, starting with a verb. Be specific about WHO to \
+contact and WHAT will likely happen: "Book an appointment with your GP and ask \
+for a repeat test to confirm the reading" beats "Follow up with your doctor". \
+Name the relevant specialty when a referral is genuinely likely. For a normal \
+result, give the honest short answer: keep to routine testing.
+
+"questions_to_ask"
+    An array of 2 to 3 questions the reader could ask their doctor about this \
+result. Make them specific to this test and this value, not generic. Empty \
+array for a normal result.
 
 Rules:
-  - Be specific and clinically grounded. Avoid filler such as "consult your \
-doctor" with no further detail.
-  - Never state or imply a definitive diagnosis. Lab values suggest; they do \
-not confirm.
-  - Explain normal results too, briefly - confirming what is reassuring has \
-clinical value.
-  - Keep each field under 60 words.
+  - Plain language throughout. No jargon unless you define it in the same \
+sentence.
+  - Never give a definitive diagnosis. Lab values suggest and prompt \
+investigation; they do not confirm.
+  - Never tell the reader to ignore an abnormal result, and never alarm them \
+about a normal one.
+  - Do not invent numbers. Use only the values supplied.
+  - Do not include a disclaimer about consulting a professional - the \
+interface already carries one.
 
 Return ONLY a JSON array, one object per result, in the SAME ORDER as the \
-input, each with exactly the keys "explanation" and "next_step". No prose \
-outside the JSON.\
+input. No prose outside the JSON.\
 """
 
 
@@ -100,8 +161,17 @@ def build_result_payload(result: dict[str, Any]) -> dict[str, Any]:
         payload["normal_range"] = f"{reference['low']}-{reference['high']} {reference['unit']}"
     if result.get("deviation_text"):
         payload["deviation"] = result["deviation_text"]
+    if result.get("direction") in {"below", "above"}:
+        payload["direction"] = result["direction"]
+    if result.get("comparison") == "qualitative":
+        payload["note"] = (
+            "This is a qualitative result: it records whether something is "
+            "present, not how much."
+        )
     if result.get("notes"):
-        payload["note"] = result["notes"]
+        payload["data_quality_note"] = result["notes"]
+    if result.get("error"):
+        payload["could_not_interpret"] = result["error"]
 
     return payload
 
@@ -114,6 +184,26 @@ def build_user_prompt(results: list[dict[str, Any]]) -> str:
         f"{json.dumps(payloads, indent=2)}\n\n"
         f"Return a JSON array of exactly {len(payloads)} objects, in the same order."
     )
+
+
+# ---------------------------------------------------------------------------
+# Response parsing
+# ---------------------------------------------------------------------------
+
+def _as_tuple(value: Any, limit: int = 5) -> tuple[str, ...]:
+    """Coerce a list-ish field into a tuple of non-empty strings."""
+    if not value:
+        return ()
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list):
+        return ()
+    return tuple(str(v).strip() for v in value[:limit] if str(v).strip())
+
+
+def _urgency(value: Any, fallback: str = "routine") -> str:
+    text = str(value or "").strip().lower()
+    return text if text in URGENCY_LEVELS else fallback
 
 
 def parse_explanations(raw: str, expected: int) -> list[Explanation]:
@@ -163,8 +253,14 @@ def parse_explanations(raw: str, expected: int) -> list[Explanation]:
 
     return [
         Explanation(
-            explanation=str(item.get("explanation", "")).strip(),
-            next_step=str(item.get("next_step", "")).strip(),
+            headline=str(item.get("headline", "")).strip(),
+            what_it_measures=str(item.get("what_it_measures", "")).strip(),
+            what_result_means=str(item.get("what_result_means", "")).strip(),
+            urgency=_urgency(item.get("urgency")),
+            urgency_reason=str(item.get("urgency_reason", "")).strip(),
+            possible_causes=_as_tuple(item.get("possible_causes")),
+            next_steps=_as_tuple(item.get("next_steps")),
+            questions_to_ask=_as_tuple(item.get("questions_to_ask"), limit=3),
         )
         for item in data
     ]
@@ -184,7 +280,7 @@ class LLMProvider(ABC):
 
     @abstractmethod
     async def explain(self, results: list[dict[str, Any]]) -> list[Explanation]:
-        """Generate an explanation and next step for each classified result.
+        """Generate a structured explanation for each classified result.
 
         Args:
             results: Classified results, already ordered by severity.

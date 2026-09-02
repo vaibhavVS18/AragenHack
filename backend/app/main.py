@@ -16,17 +16,32 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from .agent import LabAgent
+from .assistant import AssistantService, AssistantUnavailable
 from .config import Settings, get_settings
 from .csv_loader import CSVFormatError, parse_csv
 from .datasets import DatasetNotFound, list_datasets, load_dataset
+from .feedback import feedback_summary, record_feedback
 from .mcp_client import MCPUnavailableError
-from .models import AnalyzeRequest, AnalyzeResponse, HealthResponse
+from .models import (
+    AnalyzeRequest,
+    AnalyzeResponse,
+    AssistantAnswer,
+    FeedbackReceipt,
+    FeedbackSubmission,
+    FeedbackSummary,
+    AssistantQuestion,
+    AssistantSource,
+    HealthResponse,
+    ReportQuestion,
+)
+from .report import build_report
 
 logging.basicConfig(
     level=logging.INFO,
@@ -46,6 +61,7 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     app.state.settings = settings
     app.state.agent = LabAgent(settings)
+    app.state.assistant = AssistantService(settings)
 
     logger.info("LLM provider: %s (%s)",
                 app.state.agent.llm.name, app.state.agent.llm.model or "n/a")
@@ -96,6 +112,11 @@ def get_agent(request: Request) -> LabAgent:
     return request.app.state.agent
 
 
+def get_assistant(request: Request) -> AssistantService:
+    """The shared assistant instance built at startup."""
+    return request.app.state.assistant
+
+
 def enforce_batch_limit(count: int, settings: Settings) -> None:
     """Reject oversized batches before any work begins.
 
@@ -140,6 +161,12 @@ async def _mcp_unavailable(request: Request, exc: MCPUnavailableError):
 @app.exception_handler(CSVFormatError)
 async def _csv_format_error(request: Request, exc: CSVFormatError):
     return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
+@app.exception_handler(AssistantUnavailable)
+async def _assistant_unavailable(request: Request, exc: AssistantUnavailable):
+    """The assistant is an extra; its absence must never look like an outage."""
+    return JSONResponse(status_code=503, content={"detail": str(exc)})
 
 
 @app.exception_handler(DatasetNotFound)
@@ -222,6 +249,172 @@ async def analyze_labs(
 
 
 @app.get(
+    "/assistant/status",
+    summary="Whether the assistant can answer, and on what",
+)
+async def assistant_status(
+    assistant: AssistantService = Depends(get_assistant),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Report which backends are ready.
+
+    The widget calls this before showing itself, so a missing model reads as a
+    disabled button with a reason rather than a question that fails.
+    """
+    if not settings.assistant_enabled:
+        return {"available": False, "detail": "Assistant disabled by configuration."}
+    return await assistant.status()
+
+
+@app.post(
+    "/assistant/ask",
+    summary="Ask a question about how this application works",
+    responses={503: {"description": "No assistant backend available"}},
+)
+async def assistant_ask(
+    payload: AssistantQuestion,
+    assistant: AssistantService = Depends(get_assistant),
+    agent: LabAgent = Depends(get_agent),
+    settings: Settings = Depends(get_settings),
+) -> AssistantAnswer:
+    """Answer from the indexed documentation and reference table.
+
+    The reference catalogue is fetched over MCP and passed in, so the
+    assistant's knowledge of thresholds comes from the same source used to
+    classify rather than from a copy that could drift.
+    """
+    if not settings.assistant_enabled:
+        raise HTTPException(status_code=503, detail="Assistant is disabled.")
+
+    # Only fetched when there is an index to build. It is used for nothing
+    # else, so once the index exists this round trip is pure latency - about
+    # 1.5s on every question, spent spawning an MCP server to produce a table
+    # that would be discarded on arrival.
+    catalogue = None
+    if not assistant.is_indexed:
+        try:
+            catalogue = await agent.reference_ranges()
+        except MCPUnavailableError:
+            # The documentation alone still answers most questions.
+            logger.warning("Assistant indexing without the reference table.")
+
+    answer = await assistant.ask(
+        payload.question,
+        catalogue,
+        [(turn.role, turn.text) for turn in payload.history],
+    )
+    return AssistantAnswer(
+        answer=answer.answer,
+        tone=answer.tone,
+        engine=answer.engine,
+        grounded=answer.grounded,
+        sources=[
+            AssistantSource(title=s.title, source=s.source, score=s.score)
+            for s in answer.sources
+        ],
+    )
+
+
+@app.post(
+    "/assistant/report",
+    summary="Ask a question about one set of results",
+    responses={503: {"description": "No assistant backend available"}},
+)
+async def assistant_report(
+    payload: ReportQuestion,
+    assistant: AssistantService = Depends(get_assistant),
+    settings: Settings = Depends(get_settings),
+) -> AssistantAnswer:
+    """Answer from the reader's own results, and from nothing else.
+
+    A separate endpoint rather than a flag on ``/assistant/ask``. It needs no
+    catalogue, builds no index and makes no embedding call - the reader's
+    results are the whole ground. Sharing the retrieval path meant the
+    documentation competed with those results and won.
+    """
+    if not settings.assistant_enabled:
+        raise HTTPException(status_code=503, detail="Assistant is disabled.")
+
+    answer = await assistant.ask_about_report(
+        payload.question,
+        payload.report,
+        [(turn.role, turn.text) for turn in payload.history],
+    )
+    return AssistantAnswer(
+        answer=answer.answer,
+        tone=answer.tone,
+        engine=answer.engine,
+        grounded=answer.grounded,
+        sources=[],
+    )
+
+
+@app.post(
+    "/feedback",
+    response_model=FeedbackReceipt,
+    summary="Record feedback about the application",
+    responses={503: {"description": "Feedback could not be stored"}},
+)
+async def submit_feedback(payload: FeedbackSubmission) -> FeedbackReceipt:
+    """Append one piece of feedback.
+
+    Stored server-side rather than sent through a mail service: doing the
+    latter means shipping a provider's keys in the front-end bundle, where
+    anyone can read them.
+    """
+    try:
+        record = record_feedback(payload.model_dump())
+    except (OSError, ValueError) as exc:
+        logger.error("Could not store feedback: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail="Feedback could not be saved. Please try again.",
+        ) from exc
+
+    return FeedbackReceipt(
+        received_at=record["received_at"],
+        count=feedback_summary()["count"],
+    )
+
+
+@app.get(
+    "/feedback/summary",
+    response_model=FeedbackSummary,
+    summary="How much feedback has been left",
+)
+async def get_feedback_summary() -> FeedbackSummary:
+    """Counts only. Individual submissions are never served back."""
+    return FeedbackSummary(**feedback_summary())
+
+
+@app.post(
+    "/report",
+    summary="Render an analysis as a PDF report",
+    response_class=Response,
+    responses={200: {"content": {"application/pdf": {}}}},
+)
+async def report(payload: AnalyzeResponse) -> Response:
+    """Render an already-produced analysis as a PDF.
+
+    Takes the response rather than the request, so generating a report costs
+    no second analysis and no further LLM call - the caller sends back what it
+    was given. Building the PDF server-side with real table primitives gives
+    measured columns, page breaks that respect row boundaries, and a header
+    and footer on every page, which a print stylesheet cannot do reliably.
+    """
+    pdf = build_report(payload.model_dump())
+    stamp = datetime.now().strftime("%Y-%m-%d-%H%M")
+    label = (payload.patient_id or "results").replace(" ", "-")[:40]
+    filename = f"aragen-lab-report-{label}-{stamp}.pdf"
+
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get(
     "/datasets",
     summary="List the sample datasets bundled with the repository",
 )
@@ -258,6 +451,36 @@ async def analyze_dataset(
         patient_id=csv_patient_id or dataset.name,
         row_errors=row_errors,
     )
+
+
+@app.post(
+    "/preview_csv",
+    summary="Parse a CSV without classifying or calling the LLM",
+    responses={400: {"description": "File could not be read as a lab-results CSV"}},
+)
+async def preview_csv(
+    file: UploadFile = File(..., description="UTF-8 CSV to inspect"),
+) -> dict:
+    """Show what a CSV parses to, before any analysis happens.
+
+    Uses the same parser as the analysis endpoint, so the preview cannot
+    disagree with what a subsequent upload would do. Nothing is classified and
+    no LLM call is made, which makes this cheap enough to run on every file
+    selection - the user sees mis-parsed columns immediately rather than after
+    waiting for a full analysis.
+    """
+    raw = await file.read()
+    labs, row_errors, patient_id = parse_csv(raw)
+
+    return {
+        "filename": file.filename,
+        "size_bytes": len(raw),
+        "patient_id": patient_id,
+        "row_count": len(labs),
+        "error_count": len(row_errors),
+        "labs": [lab.model_dump() for lab in labs],
+        "errors": [error.model_dump() for error in row_errors],
+    }
 
 
 @app.post(

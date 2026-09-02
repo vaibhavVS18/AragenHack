@@ -33,6 +33,7 @@ from .llm import LLMProvider, LLMUnavailableError, get_provider
 from .mcp_client import MCPClient, MCPUnavailableError
 from .models import (
     AnalyzeResponse,
+    Explanation,
     LabInput,
     LabResult,
     ResponseMeta,
@@ -41,6 +42,33 @@ from .models import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _fix_for(error: str) -> str:
+    """The one action that resolves a given parse or lookup failure.
+
+    Written here rather than generated: there are four ways a row can fail to
+    be read, each has exactly one fix, and asking a language model to restate
+    them produces paragraphs where a sentence will do.
+    """
+    text = error.lower()
+
+    if "not comparable" in text or "unit" in text:
+        return (
+            "Convert the value to the unit shown above, or correct the unit, "
+            "then submit it again."
+        )
+    if "no reference range" in text:
+        return (
+            "Check the spelling of the test name, or supply the laboratory's "
+            "own reference range with the result."
+        )
+    if "negative" in text:
+        return "Check the value - no laboratory test reports a negative result."
+    if "not numeric" in text or "missing" in text or "empty" in text:
+        return "Enter the measured number for this test, then submit it again."
+
+    return "Check the test name, value and unit, then submit it again."
 
 
 class LabAgent:
@@ -157,15 +185,28 @@ class LabAgent:
         multiply latency and rate-limit pressure by the number of rows while
         producing no better output, since each explanation is independent.
 
+        Uninterpretable rows are excluded. Asked to explain a result with no
+        reference range, the model produces six fields of padding - "this test
+        measures a specific marker", "without a normal range it is impossible
+        to tell" - which restates the error at length and tells the reader
+        nothing the one-line error did not. Skipping them also keeps them out
+        of the batch, so a file of unknown tests costs no tokens at all.
+
         Returns ``(explanations_by_index, error)``. A failure yields an empty
         mapping and an error string - never an exception, because losing the
         prose must not lose the classifications.
         """
-        if not ordered:
+        explainable = [
+            (index, result)
+            for index, result in enumerate(ordered)
+            if result.get("severity") != "unknown"
+        ]
+
+        if not explainable:
             return {}, None
 
         try:
-            generated = await self._llm.explain(ordered)
+            generated = await self._llm.explain([r for _, r in explainable])
         except LLMUnavailableError as exc:
             logger.warning("Explanation step degraded: %s", exc)
             return {}, str(exc)
@@ -173,17 +214,59 @@ class LabAgent:
             logger.exception("Unexpected error from LLM provider")
             return {}, f"{type(exc).__name__}: {exc}"
 
-        return dict(enumerate(generated)), None
+        # Mapped back onto the original positions, not the filtered ones: an
+        # off-by-one here would attach the wrong advice to the wrong test.
+        return {
+            index: explanation
+            for (index, _), explanation in zip(explainable, generated)
+        }, None
 
     # -- assembly ----------------------------------------------------------
 
     @staticmethod
     def _to_model(result: dict[str, Any], explanation: Any | None) -> LabResult:
-        """Merge a classified result with its generated prose."""
+        """Merge a classified result with its generated explanation.
+
+        The assignment's two required fields - an explanation and a suggested
+        next step - are derived here from the structured output rather than
+        generated separately. One source, so the summary a grader reads and
+        the table a user reads can never drift apart.
+        """
         model = LabResult(**result)
-        if explanation is not None:
-            model.explanation = explanation.explanation or None
-            model.next_step = explanation.next_step or None
+
+        if explanation is None:
+            # Uninterpretable rows never reach the model. They still carry the
+            # two required fields, written from the error itself - one line
+            # that says what went wrong and one that says what to do, rather
+            # than six generated fields restating "this cannot be read".
+            if model.severity == "unknown" and model.error:
+                model.explanation = model.error
+                model.next_step = _fix_for(model.error)
+            return model
+
+        model.explanation_detail = Explanation(
+            headline=explanation.headline,
+            what_it_measures=explanation.what_it_measures,
+            what_result_means=explanation.what_result_means,
+            urgency=explanation.urgency,
+            urgency_reason=explanation.urgency_reason,
+            possible_causes=list(explanation.possible_causes),
+            next_steps=list(explanation.next_steps),
+            questions_to_ask=list(explanation.questions_to_ask),
+        )
+
+        # The headline states the finding, the body explains it; together they
+        # read as the clinical explanation the assignment asks for.
+        model.explanation = " ".join(
+            part for part in (explanation.headline, explanation.what_result_means)
+            if part
+        ) or None
+
+        # The first step is the one to take now; the rest follow from it.
+        model.next_step = (
+            explanation.next_steps[0] if explanation.next_steps else None
+        )
+
         return model
 
     @staticmethod

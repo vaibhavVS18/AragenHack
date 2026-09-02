@@ -10,11 +10,10 @@ import SeverityBadge from "./SeverityBadge";
  *
  *   1. the verdict           - badge and value, readable at a glance
  *   2. where the value sits  - a gauge showing every severity zone
- *   3. what it means         - the LLM explanation
- *   4. what to do            - the LLM's suggested next step
- *   5. how it was decided    - the literal comparison, collapsed by default
+ *   3. what it means         - the generated explanation, as a table
+ *   4. how it was decided    - the literal comparison, collapsed by default
  *
- * Item 5 is the audit trail. It is hidden because most readers will not need
+ * Item 4 is the audit trail. It is hidden because most readers will not need
  * it, and always present because the ones who do should never have to trust
  * the interface.
  */
@@ -106,6 +105,122 @@ function RangeGauge({ value, range, unit }) {
   );
 }
 
+const URGENCY = {
+  emergency: { label: "Emergency", detail: "Seek medical attention today" },
+  urgent: { label: "Urgent", detail: "Contact a doctor within a few days" },
+  soon: { label: "Soon", detail: "Raise at your next appointment" },
+  routine: { label: "Routine", detail: "No action beyond normal check-ups" },
+};
+
+/**
+ * The generated explanation, laid out as a table.
+ *
+ * Each row answers one question a reader actually has. A paragraph of clinical
+ * prose technically contains the same information, but it makes the reader
+ * hunt for the part that applies to them - and the part they came for is
+ * almost always "what do I do now", which is the hardest thing to find in
+ * running text.
+ *
+ * Rows are omitted rather than shown empty: a normal result has no causes to
+ * list and no questions to ask, and blank rows would imply something is
+ * missing.
+ *
+ * Two rows are given a tinted ground: what the result means, and what to do
+ * about it. Everything else on the card is context; those two are what the
+ * reader came for, and in a six-row table of equal weight they were no easier
+ * to find than the rest.
+ */
+function ExplanationTable({ explanation }) {
+  const {
+    headline,
+    what_it_measures: whatItMeasures,
+    what_result_means: whatResultMeans,
+    possible_causes: causes,
+    urgency,
+    urgency_reason: urgencyReason,
+    next_steps: nextSteps,
+    questions_to_ask: questions,
+  } = explanation;
+
+  const urgencyMeta = URGENCY[urgency] ?? URGENCY.routine;
+
+  return (
+    <div className="explain">
+      {headline && <p className="explain__headline">{headline}</p>}
+
+      <table className="explain__table">
+        <tbody>
+          {whatItMeasures && (
+            <tr>
+              <th scope="row">What this test measures</th>
+              <td>{whatItMeasures}</td>
+            </tr>
+          )}
+
+          {whatResultMeans && (
+            <tr className="explain__row--key">
+              <th scope="row">What your result means</th>
+              <td>{whatResultMeans}</td>
+            </tr>
+          )}
+
+          {causes?.length > 0 && (
+            <tr>
+              <th scope="row">Common causes</th>
+              <td>
+                <ul className="explain__list">
+                  {causes.map((cause, i) => (
+                    <li key={i}>{cause}</li>
+                  ))}
+                </ul>
+              </td>
+            </tr>
+          )}
+
+          <tr>
+            <th scope="row">How soon to act</th>
+            <td>
+              <span className={`urgency urgency--${urgency}`}>
+                {urgencyMeta.label}
+              </span>
+              <span className="explain__urgency-detail">
+                {urgencyReason || urgencyMeta.detail}
+              </span>
+            </td>
+          </tr>
+
+          {nextSteps?.length > 0 && (
+            <tr className="explain__row--key">
+              <th scope="row">What to do</th>
+              <td>
+                <ol className="explain__steps">
+                  {nextSteps.map((step, i) => (
+                    <li key={i}>{step}</li>
+                  ))}
+                </ol>
+              </td>
+            </tr>
+          )}
+
+          {questions?.length > 0 && (
+            <tr>
+              <th scope="row">Questions for your doctor</th>
+              <td>
+                <ul className="explain__list explain__list--quote">
+                  {questions.map((question, i) => (
+                    <li key={i}>{question}</li>
+                  ))}
+                </ul>
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+
 export default function ResultCard({ result }) {
   const [showReasoning, setShowReasoning] = useState(false);
 
@@ -124,6 +239,7 @@ export default function ResultCard({ result }) {
     unit_assumed: unitAssumed,
     explanation,
     next_step: nextStep,
+    explanation_detail: detail,
     notes,
     error,
     category,
@@ -159,17 +275,28 @@ export default function ResultCard({ result }) {
         </p>
       )}
 
-      {explanation && (
-        <div className="card__section">
-          <h4 className="card__label">What this means</h4>
-          <p className="card__text">{explanation}</p>
-        </div>
-      )}
+      {detail && <ExplanationTable explanation={detail} />}
 
-      {nextStep && (
-        <div className="card__section card__section--action">
-          <h4 className="card__label">Suggested next step</h4>
-          <p className="card__text">{nextStep}</p>
+      {/* No detail: either the row could not be interpreted, or the model was
+          unavailable. Both cases get the one-line reason and the one action
+          that resolves it - a full explanation table here would be six fields
+          restating "this could not be read".
+
+          An uninterpretable row's explanation *is* its error, already printed
+          above as card__error. Printing it again under a heading made the card
+          say the same sentence twice and made it look like the AI had written
+          an explanation for a row it never saw, so only the action is shown. */}
+      {!detail && (explanation || nextStep) && (
+        <div className="card__brief">
+          {explanation && explanation !== error && (
+            <p className="card__text">{explanation}</p>
+          )}
+          {nextStep && (
+            <p className="card__brief-action">
+              <span className="card__label">What to do</span>
+              {nextStep}
+            </p>
+          )}
         </div>
       )}
 

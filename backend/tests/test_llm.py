@@ -10,12 +10,13 @@ generated prose would be a flaky test of a non-deterministic system.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from app.config import Settings
 from app.llm import get_provider
 from app.llm.base import (
-    Explanation,
     LLMUnavailableError,
     build_result_payload,
     build_user_prompt,
@@ -23,7 +24,18 @@ from app.llm.base import (
 )
 from app.llm.mock import MockProvider
 
-VALID = '[{"explanation": "why one", "next_step": "do one"}]'
+VALID = json.dumps([
+    {
+        "headline": "Your result is slightly high.",
+        "what_it_measures": "How much oxygen your blood can carry.",
+        "what_result_means": "It sits just above the normal range.",
+        "possible_causes": ["dehydration", "smoking"],
+        "urgency": "soon",
+        "urgency_reason": "Worth checking, not an emergency.",
+        "next_steps": ["Book an appointment", "Ask for a repeat test"],
+        "questions_to_ask": ["Could this be dehydration?"],
+    }
+])
 
 
 # ---------------------------------------------------------------------------
@@ -33,31 +45,49 @@ VALID = '[{"explanation": "why one", "next_step": "do one"}]'
 class TestParseExplanations:
     def test_plain_json_array(self):
         [result] = parse_explanations(VALID, expected=1)
-        assert result == Explanation("why one", "do one")
+        assert result.headline == "Your result is slightly high."
+        assert result.urgency == "soon"
+        assert result.possible_causes == ("dehydration", "smoking")
+        assert len(result.next_steps) == 2
 
     def test_markdown_fenced_json(self):
         # Models wrap JSON in code fences even when told not to.
         raw = f"```json\n{VALID}\n```"
-        assert parse_explanations(raw, expected=1)[0].explanation == "why one"
+        [result] = parse_explanations(raw, expected=1)
+        assert result.headline == "Your result is slightly high."
 
     def test_bare_fence_without_language(self):
         assert parse_explanations(f"```\n{VALID}\n```", expected=1)
 
     def test_prose_around_the_array_is_ignored(self):
         raw = f"Here are the explanations you asked for:\n{VALID}\nHope that helps!"
-        assert parse_explanations(raw, expected=1)[0].next_step == "do one"
+        [result] = parse_explanations(raw, expected=1)
+        assert result.next_steps == ("Book an appointment", "Ask for a repeat test")
 
     def test_array_wrapped_in_an_object(self):
-        raw = '{"results": [{"explanation": "why", "next_step": "do"}]}'
-        assert parse_explanations(raw, expected=1)[0].explanation == "why"
+        raw = json.dumps({"results": [{"headline": "why", "urgency": "routine"}]})
+        assert parse_explanations(raw, expected=1)[0].headline == "why"
 
     def test_whitespace_is_trimmed(self):
-        raw = '[{"explanation": "  spaced  ", "next_step": "\\n do \\n"}]'
-        assert parse_explanations(raw, expected=1)[0].explanation == "spaced"
+        raw = json.dumps([{
+            "headline": "  spaced  ",
+            "urgency": "routine",
+            "next_steps": ["  padded step  "],
+        }])
+        [result] = parse_explanations(raw, expected=1)
+        assert result.headline == "spaced"
+        assert result.next_steps == ("padded step",)
 
-    def test_missing_keys_become_empty_strings(self):
-        [result] = parse_explanations('[{"explanation": "only this"}]', expected=1)
-        assert result.next_step == ""
+    def test_missing_keys_get_safe_defaults(self):
+        [result] = parse_explanations('[{"headline": "only this"}]', expected=1)
+        assert result.what_it_measures == ""
+        assert result.next_steps == ()
+        # An unspecified urgency must not become an invalid value downstream.
+        assert result.urgency == "routine"
+
+    def test_invalid_urgency_falls_back_to_routine(self):
+        raw = json.dumps([{"headline": "x", "urgency": "catastrophic"}])
+        assert parse_explanations(raw, expected=1)[0].urgency == "routine"
 
     def test_wrong_length_is_a_failure_not_a_realignment(self):
         # Silently truncating or padding would attach advice to the wrong test.
@@ -70,7 +100,7 @@ class TestParseExplanations:
 
     def test_non_array_json_raises(self):
         with pytest.raises(LLMUnavailableError):
-            parse_explanations('{"explanation": "x", "next_step": "y"}', expected=1)
+            parse_explanations('{"headline": "x"}', expected=1)
 
 
 # ---------------------------------------------------------------------------
@@ -134,14 +164,15 @@ class TestMockProvider:
             {"test_name": "G", "severity": "normal"},
         ]
         critical, normal = await MockProvider().explain(results)
-        assert "Escalate immediately" in critical.next_step
-        assert "No action required" in normal.next_step
+        assert critical.urgency == "urgent"
+        assert normal.urgency == "routine"
+        assert critical.next_steps and normal.next_steps
 
     async def test_unknown_severity_asks_the_user_to_check_the_data(self):
         results = [{"test_name": "X", "severity": "unknown", "error": "bad unit"}]
         [explanation] = await MockProvider().explain(results)
-        assert "could not be interpreted" in explanation.explanation
-        assert "resubmit" in explanation.next_step
+        assert "could not be interpreted" in explanation.headline
+        assert any("again" in step for step in explanation.next_steps)
 
 
 # ---------------------------------------------------------------------------

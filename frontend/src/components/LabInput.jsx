@@ -1,5 +1,9 @@
 import { useMemo, useRef, useState } from "react";
 
+import CsvPreview from "./CsvPreview";
+import TestNameInput from "./TestNameInput";
+import { previewCsv } from "../api/client";
+
 /**
  * LabInput - how lab results get into the app.
  *
@@ -10,6 +14,11 @@ import { useMemo, useRef, useState } from "react";
  * This component owns input state only. It hands a payload to App and never
  * calls the API or interprets results itself, so the analysis flow lives in
  * exactly one place.
+ *
+ * There is no patient field. A CSV that carries a patient column still has it
+ * read and echoed back, and a bundled dataset is labelled by its name - but
+ * asking someone to type one in added a step to every single analysis for a
+ * value almost none of them wanted to set.
  *
  * The test catalogue is fetched from the backend rather than hardcoded here.
  * Duplicating it in the UI would let the two drift, and the UI would then
@@ -29,11 +38,16 @@ export default function LabInput({ onAnalyze, loading, catalogue }) {
   const [mode, setMode] = useState("form");
   const [rows, setRows] = useState([{ ...EMPTY_ROW }]);
   const [file, setFile] = useState(null);
-  const [patientId, setPatientId] = useState("");
   const [dragging, setDragging] = useState(false);
+  const [preview, setPreview] = useState(null);
+  const [previewing, setPreviewing] = useState(false);
+  const [previewError, setPreviewError] = useState(null);
   const fileInputRef = useRef(null);
 
-  // Look up the canonical unit so it can be filled in automatically.
+  // Look up the canonical unit so it can be filled in automatically. Keyed by
+  // name and by alias, so a name the catalogue accepts under either spelling
+  // is recognised here too - and so this map doubles as the set of names that
+  // are allowed to be submitted.
   const unitByTest = useMemo(() => {
     const map = new Map();
     (catalogue ?? []).forEach((test) => {
@@ -43,17 +57,38 @@ export default function LabInput({ onAnalyze, loading, catalogue }) {
     return map;
   }, [catalogue]);
 
-  function updateRow(index, field, value) {
+  /**
+   * Whether a typed name is one the server can actually classify.
+   *
+   * Empty is not invalid - a blank row is scaffolding for the next entry, not
+   * a mistake. And while the catalogue is still loading nothing is rejected,
+   * because at that moment every name would look wrong.
+   */
+  function isKnown(name) {
+    const key = name.trim().toLowerCase();
+    if (!key || unitByTest.size === 0) return true;
+    return unitByTest.has(key);
+  }
+
+  function updateRow(index, field, value, chosen) {
     setRows((current) => {
       const next = current.map((row, i) =>
         i === index ? { ...row, [field]: value } : row,
       );
 
-      // Filling in a recognised test name suggests its unit, but never
-      // overwrites a unit the user typed themselves.
       if (field === "test_name") {
-        const unit = unitByTest.get(value.trim().toLowerCase());
-        if (unit && !next[index].unit) next[index].unit = unit;
+        if (chosen) {
+          // Picked from the list: an explicit choice of test, so its unit
+          // replaces whatever was there. Only filling an empty unit left the
+          // previous test's unit behind when the name was changed - pick
+          // Hemoglobin then switch to Potassium and the row still said g/dL.
+          next[index].unit = chosen.unit;
+        } else {
+          // Typed freely: suggest a unit, but never overwrite one the user
+          // entered themselves.
+          const unit = unitByTest.get(value.trim().toLowerCase());
+          if (unit && !next[index].unit) next[index].unit = unit;
+        }
       }
       return next;
     });
@@ -73,9 +108,34 @@ export default function LabInput({ onAnalyze, loading, catalogue }) {
     setRows(SAMPLE_ROWS.map((row) => ({ ...row })));
   }
 
+  /**
+   * Take a file and immediately ask the server what it parses to.
+   *
+   * Previewing costs one cheap request and no LLM call, so it runs on every
+   * selection rather than behind a button - a mis-mapped column should be
+   * visible straight away, not after a full analysis.
+   */
+  async function selectFile(chosen) {
+    setFile(chosen);
+    setPreview(null);
+    setPreviewError(null);
+    if (!chosen) return;
+
+    setPreviewing(true);
+    try {
+      setPreview(await previewCsv(chosen));
+    } catch (err) {
+      setPreviewError(err);
+    } finally {
+      setPreviewing(false);
+    }
+  }
+
   function clearAll() {
     setRows([{ ...EMPTY_ROW }]);
     setFile(null);
+    setPreview(null);
+    setPreviewError(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
@@ -85,11 +145,17 @@ export default function LabInput({ onAnalyze, loading, catalogue }) {
     (row) => row.test_name.trim() && String(row.value).trim(),
   );
 
+  // A name outside the catalogue cannot produce a classification, so it is
+  // stopped here rather than spending an analysis to come back as "unknown".
+  const badNames = rows.filter(
+    (row) => row.test_name.trim() && !isKnown(row.test_name),
+  );
+
   const canSubmit = loading
     ? false
     : mode === "form"
-      ? filledRows.length > 0
-      : file != null;
+      ? filledRows.length > 0 && badNames.length === 0
+      : file != null && !previewing && !previewError;
 
   function handleSubmit(event) {
     event.preventDefault();
@@ -98,7 +164,6 @@ export default function LabInput({ onAnalyze, loading, catalogue }) {
     if (mode === "form") {
       onAnalyze({
         kind: "form",
-        patientId: patientId.trim() || null,
         labs: filledRows.map((row) => ({
           test_name: row.test_name.trim(),
           value: String(row.value).trim(),
@@ -106,7 +171,7 @@ export default function LabInput({ onAnalyze, loading, catalogue }) {
         })),
       });
     } else {
-      onAnalyze({ kind: "csv", patientId: patientId.trim() || null, file });
+      onAnalyze({ kind: "csv", file });
     }
   }
 
@@ -114,7 +179,7 @@ export default function LabInput({ onAnalyze, loading, catalogue }) {
     event.preventDefault();
     setDragging(false);
     const dropped = event.dataTransfer.files?.[0];
-    if (dropped) setFile(dropped);
+    if (dropped) selectFile(dropped);
   }
 
   return (
@@ -151,13 +216,12 @@ export default function LabInput({ onAnalyze, loading, catalogue }) {
 
           {rows.map((row, index) => (
             <div className="row" key={index}>
-              <input
-                className="field"
-                list="known-tests"
-                placeholder="e.g. Hemoglobin"
+              <TestNameInput
                 value={row.test_name}
-                onChange={(e) => updateRow(index, "test_name", e.target.value)}
-                aria-label={`Test name, row ${index + 1}`}
+                onChange={(name, test) => updateRow(index, "test_name", name, test)}
+                catalogue={catalogue}
+                rowIndex={index}
+                invalid={!isKnown(row.test_name)}
               />
               <input
                 className="field"
@@ -185,14 +249,6 @@ export default function LabInput({ onAnalyze, loading, catalogue }) {
             </div>
           ))}
 
-          <datalist id="known-tests">
-            {(catalogue ?? []).map((test) => (
-              <option key={test.test_name} value={test.test_name}>
-                {test.low}–{test.high} {test.unit}
-              </option>
-            ))}
-          </datalist>
-
           <div className="rows__actions">
             <button type="button" className="btn btn--ghost" onClick={addRow}>
               + Add row
@@ -206,6 +262,7 @@ export default function LabInput({ onAnalyze, loading, catalogue }) {
           </div>
         </div>
       ) : (
+        <>
         <div
           className={`drop ${dragging ? "drop--active" : ""}`}
           onDragOver={(e) => {
@@ -221,7 +278,7 @@ export default function LabInput({ onAnalyze, loading, catalogue }) {
             type="file"
             accept=".csv,text/csv"
             className="sr-only"
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            onChange={(e) => selectFile(e.target.files?.[0] ?? null)}
           />
           <label htmlFor="csv-file" className="drop__label">
             {file ? (
@@ -240,23 +297,27 @@ export default function LabInput({ onAnalyze, loading, catalogue }) {
               </>
             )}
           </label>
-        </div>
+          </div>
+          <CsvPreview preview={preview} loading={previewing} error={previewError} />
+        </>
       )}
 
       <div className="input__footer">
-        <input
-          className="field field--patient"
-          placeholder="Patient ID (optional)"
-          value={patientId}
-          onChange={(e) => setPatientId(e.target.value)}
-          aria-label="Patient ID"
-        />
         <button type="submit" className="btn btn--primary" disabled={!canSubmit}>
           {loading ? "Analyzing…" : "Analyze results"}
         </button>
       </div>
 
-      {mode === "form" && filledRows.length > 0 && (
+      {mode === "form" && badNames.length > 0 && (
+        <p className="input__count input__count--warn">
+          {badNames.length === 1
+            ? `"${badNames[0].test_name.trim()}" is not a test this can classify.`
+            : `${badNames.length} test names are not ones this can classify.`}{" "}
+          Choose from the list to continue.
+        </p>
+      )}
+
+      {mode === "form" && badNames.length === 0 && filledRows.length > 0 && (
         <p className="input__count">
           {filledRows.length} result{filledRows.length === 1 ? "" : "s"} ready
         </p>

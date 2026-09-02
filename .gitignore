@@ -27,6 +27,16 @@ data/*
 !data/lab_test_results_public.csv
 !data/metadata.json
 
+# ---- Generated reports ----
+# Built on demand by POST /report; never a source artifact.
+*.pdf
+!GenAI_FullStack_AssignmentV2.pdf
+
+# ---- Runtime state ----
+# Written by the app at runtime, never a source artifact.
+backend/feedback.jsonl
+backend/.assistant_index.*
+
 # ---- Editors / OS ----
 .vscode/
 .idea/

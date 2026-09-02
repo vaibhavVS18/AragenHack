@@ -75,7 +75,17 @@ class CountingProvider(LLMProvider):
     async def explain(self, results):
         self.calls += 1
         self.batch_sizes.append(len(results))
-        return [Explanation(f"why {i}", f"do {i}") for i in range(len(results))]
+        return [
+            Explanation(
+                headline=f"why {i}",
+                what_it_measures="what it measures",
+                what_result_means="what it means",
+                urgency="routine",
+                urgency_reason="no risk in waiting",
+                next_steps=(f"do {i}",),
+            )
+            for i in range(len(results))
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -94,6 +104,7 @@ class TestPipeline:
             "critical", "warning", "normal",
         ]
         assert all(r.explanation and r.next_step for r in response.results)
+        assert all(r.explanation_detail.next_steps for r in response.results)
 
     async def test_results_arrive_ordered_by_severity(self, agent):
         response = await agent.analyze(labs(
@@ -179,7 +190,11 @@ class TestExplainStep:
         response = await agent.analyze(labs(
             ("Glucose", 92), ("Potassium", 6.8), ("Sodium", 128),
         ))
-        assert [r.explanation for r in response.results] == ["why 0", "why 1", "why 2"]
+        assert [r.explanation_detail.headline for r in response.results] == [
+            "why 0", "why 1", "why 2",
+        ]
+        # The flat spec fields follow the same ordering.
+        assert [r.next_step for r in response.results] == ["do 0", "do 1", "do 2"]
 
     async def test_no_llm_call_for_an_empty_batch(self, settings):
         provider = CountingProvider()
@@ -203,6 +218,8 @@ class TestDegradedMode:
         assert result.severity == "critical"          # the important half survives
         assert result.rule_fired                       # reasoning survives
         assert result.explanation is None              # only the prose is lost
+        assert result.next_step is None
+        assert result.explanation_detail is None
 
     async def test_llm_failure_is_reported_in_meta(self, settings):
         agent = LabAgent(settings, llm=FailingProvider())

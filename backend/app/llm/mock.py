@@ -6,8 +6,8 @@ demonstrable before a key exists and makes tests reproducible.
 This is scaffolding, not a substitute for the real thing. The assignment
 requires genuine LLM integration, and ``LLM_PROVIDER=gemini`` is what the
 submitted demo uses. Text here is composed from the classification fields by
-string templates - useful for checking wiring and layout, but it is not a
-clinical explanation and never claims to be.
+string templates - enough to check wiring and layout, but it is not a clinical
+explanation and never claims to be.
 """
 
 from __future__ import annotations
@@ -17,25 +17,27 @@ from typing import Any
 
 from .base import Explanation, LLMProvider
 
-# Phrasing per severity: (opening clause, action verb).
-_SEVERITY_FRAMING = {
+# Per severity: (headline verb, urgency, urgency reason).
+_FRAMING = {
     "critical": (
-        "This result is markedly outside the reference range and is "
-        "considered a critical value.",
-        "Escalate immediately",
+        "is far outside the normal range and needs prompt medical attention",
+        "urgent",
+        "Values this far outside the normal range can affect how the body works and should be reviewed quickly.",
     ),
     "warning": (
-        "This result falls outside the reference range but is not in the "
-        "critical band.",
-        "Arrange follow-up",
+        "is outside the normal range, though not severely",
+        "soon",
+        "A single out-of-range result often settles on its own, but it should be checked rather than ignored.",
     ),
     "normal": (
-        "This result sits within the expected reference range.",
-        "No action required",
+        "is within the normal range",
+        "routine",
+        "Nothing here needs action beyond your usual check-ups.",
     ),
     "unknown": (
-        "This result could not be interpreted against a reference range.",
-        "Verify the submitted data",
+        "could not be interpreted",
+        "soon",
+        "Without a reference range the value cannot be judged either way.",
     ),
 }
 
@@ -58,46 +60,68 @@ class MockProvider(LLMProvider):
     @staticmethod
     def _explain_one(result: dict[str, Any]) -> Explanation:
         severity = result.get("severity", "unknown")
-        opening, verb = _SEVERITY_FRAMING.get(
-            severity, _SEVERITY_FRAMING["unknown"]
-        )
+        phrase, urgency, urgency_reason = _FRAMING.get(severity, _FRAMING["unknown"])
 
         test = result.get("test_name", "This test")
         value = result.get("value")
         unit = result.get("unit") or ""
-        measures = result.get("measures")
-        specialty = result.get("specialty", "internal medicine")
+        measures = result.get("measures") or "a substance measured in the blood"
+        specialty = result.get("specialty", "your doctor")
+        reference = result.get("reference_range")
         deviation = result.get("deviation_text")
 
-        # --- explanation ---
-        parts = [f"{test} measured {value} {unit}.".replace("  ", " ")]
-        if measures:
-            parts.append(f"This test reflects {measures}.")
-        parts.append(opening)
+        # --- what this result means ---
+        parts = [f"Your {test.lower()} result is {value} {unit}.".replace("  ", " ")]
+        if reference:
+            parts.append(
+                f"The normal range is {reference['low']} to {reference['high']} "
+                f"{reference['unit']}."
+            )
         if deviation and severity in {"critical", "warning"}:
-            parts.append(f"The value is {deviation}.")
+            parts.append(f"That is {deviation}.")
         if severity == "unknown" and result.get("error"):
             parts.append(result["error"])
-
-        # --- next step ---
-        if severity == "critical":
-            next_step = (
-                f"{verb}: confirm with a repeat sample and contact "
-                f"{specialty} for urgent review."
-            )
-        elif severity == "warning":
-            next_step = (
-                f"{verb}: repeat the test to confirm the trend and consider a "
-                f"{specialty} referral if it persists."
-            )
         elif severity == "normal":
-            next_step = f"{verb}. Continue routine monitoring."
-        else:
-            next_step = (
-                f"{verb}: check the test name, value and unit, then resubmit."
+            parts.append("No action is needed based on this result alone.")
+
+        # --- causes and steps ---
+        if severity in {"critical", "warning"}:
+            causes = (
+                "a temporary change such as illness, dehydration or medication",
+                "an underlying condition that needs investigating",
+                "natural variation between tests",
             )
+            steps = (
+                f"Contact {specialty} and share this result.",
+                "Ask for a repeat test to confirm the reading.",
+                "Mention any recent illness, new medication or changes in how you feel.",
+            )
+            questions = (
+                f"Is this {test.lower()} result likely to be temporary?",
+                "What would you like to check next, and how soon?",
+            )
+        elif severity == "unknown":
+            causes = ("the test name or unit was not recognised",)
+            steps = (
+                "Check the test name, value and unit, then submit it again.",
+                "If the test is correct, ask the laboratory for its reference range.",
+            )
+            questions = ()
+        else:
+            causes = ()
+            steps = ("Keep to your usual testing schedule.",)
+            questions = ()
 
         return Explanation(
-            explanation=" ".join(parts),
-            next_step=next_step,
+            headline=f"Your {test.lower()} {phrase}.",
+            what_it_measures=(
+                f"{test} reflects {measures}. It is measured to check how well "
+                "that part of the body is working."
+            ),
+            what_result_means=" ".join(parts),
+            urgency=urgency,
+            urgency_reason=urgency_reason,
+            possible_causes=causes,
+            next_steps=steps,
+            questions_to_ask=questions,
         )

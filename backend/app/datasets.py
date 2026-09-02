@@ -82,6 +82,20 @@ class DatasetNotFound(KeyError):
     """The requested dataset id is not in the catalogue, or its file is gone."""
 
 
+def _count_rows(path: Path) -> int | None:
+    """Data rows in a CSV, excluding the header.
+
+    Reported so a card can say "27 results" rather than "3 KB" - a reader
+    choosing a sample cares how much they are about to analyse, and kilobytes
+    do not tell them that.
+    """
+    try:
+        with path.open("r", encoding="utf-8-sig", errors="replace") as handle:
+            return max(sum(1 for line in handle if line.strip()) - 1, 0)
+    except OSError:
+        return None
+
+
 def list_datasets() -> list[dict[str, object]]:
     """Describe every bundled dataset, marking which files are present.
 
@@ -97,6 +111,7 @@ def list_datasets() -> list[dict[str, object]]:
             "synthetic": d.synthetic,
             "available": d.path.exists(),
             "size_bytes": d.path.stat().st_size if d.path.exists() else None,
+            "rows": _count_rows(d.path) if d.path.exists() else None,
         }
         for d in CATALOGUE.values()
     ]

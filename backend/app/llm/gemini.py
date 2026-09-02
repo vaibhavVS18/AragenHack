@@ -63,26 +63,82 @@ PERMANENT_ERROR_MARKERS = (
     "is not found",
 )
 
-# The shape every response must take: an array of objects, one per result.
+# The shape every response must take. Declaring it to the API is stronger than
+# asking for it in the prompt: the model is constrained to these fields rather
+# than reminded of them, which is what makes a structured render safe to build
+# on. `propertyOrdering` also fixes generation order, which measurably improves
+# adherence for multi-field objects.
+def _str(description: str) -> types.Schema:
+    return types.Schema(type=types.Type.STRING, description=description)
+
+
+def _list(description: str) -> types.Schema:
+    return types.Schema(
+        type=types.Type.ARRAY,
+        description=description,
+        items=types.Schema(type=types.Type.STRING),
+    )
+
+
 RESPONSE_SCHEMA = types.Schema(
     type=types.Type.ARRAY,
     items=types.Schema(
         type=types.Type.OBJECT,
-        required=["explanation", "next_step"],
+        required=[
+            "headline",
+            "what_it_measures",
+            "what_result_means",
+            "urgency",
+            "urgency_reason",
+            "possible_causes",
+            "next_steps",
+            "questions_to_ask",
+        ],
+        property_ordering=[
+            "headline",
+            "what_it_measures",
+            "what_result_means",
+            "possible_causes",
+            "urgency",
+            "urgency_reason",
+            "next_steps",
+            "questions_to_ask",
+        ],
         properties={
-            "explanation": types.Schema(
-                type=types.Type.STRING,
-                description=(
-                    "1-3 sentences on what this result means clinically, "
-                    "referencing the value and its distance from the "
-                    "reference range."
-                ),
+            "headline": _str(
+                "One plain-English sentence, max 20 words, stating what this "
+                "result shows. Lead with meaning, not the number."
             ),
-            "next_step": types.Schema(
+            "what_it_measures": _str(
+                "What this test measures and why, in everyday language. "
+                "Independent of this particular value."
+            ),
+            "what_result_means": _str(
+                "Two to four sentences interpreting this specific value: the "
+                "number, the normal range, how far outside it sits, and what "
+                "that means for the body. Define any medical term inline."
+            ),
+            "possible_causes": _list(
+                "Two to four short phrases: common reasons for a result like "
+                "this, most likely first, including benign causes. Empty for "
+                "a normal result."
+            ),
+            "urgency": types.Schema(
                 type=types.Type.STRING,
-                description=(
-                    "One concrete action, with urgency matching the severity."
-                ),
+                enum=["emergency", "urgent", "soon", "routine"],
+                description="How quickly the reader should act.",
+            ),
+            "urgency_reason": _str(
+                "One short sentence on why that urgency - the actual risk of "
+                "waiting."
+            ),
+            "next_steps": _list(
+                "Two to four concrete actions in order, each starting with a "
+                "verb, specific about who to contact and what will happen."
+            ),
+            "questions_to_ask": _list(
+                "Two to three specific questions for the reader's doctor "
+                "about this result. Empty for a normal result."
             ),
         },
     ),

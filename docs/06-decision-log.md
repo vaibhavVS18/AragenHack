@@ -253,3 +253,42 @@ still on screen after navigating to Analyze.
 of starting the app. The catalogue is an explicit registry, not a directory
 scan, and ids are never joined onto a filesystem path - so there is no
 traversal surface.
+
+---
+
+### D17 — Aragen brand system, with the severity palette preserved
+
+**Context:** Two brand boards were available: **Aragen AI** (clinical lab
+triage) and **Journiks AI** (emotionally intelligent travel).
+
+**Decision:** Aragen, adopted in full — Ink Navy / Deep Indigo canvas, the
+Aragen Indigo and Clarity Violet brand core, the Pulse Mark, and the Fraunces /
+IBM Plex Sans / JetBrains Mono type system.
+
+**Why:** Journiks is a travel brand. Its warm teal-and-gold palette and "mood
+system" mapping emotions to destinations carry no vocabulary for clinical
+severity, and would make a triage tool read as a holiday app. Aragen was built
+for this exact product: its positioning line — *"a clinical judgment layer
+between every result and the clinician who needs it"* — describes what this
+application does, and its Signal System is the same idea as our severity model.
+
+**The one departure, and why it is deliberate.** Aragen's Signal System uses
+blue for Normal and violet/orange for the abnormal bands. The assignment
+specifies and grades `Red = Critical, Yellow = Warning, Green = Normal`, and
+those conventions are close to universal in clinical software — a clinician
+reading a blue "Normal" badge has to translate. Severity semantics therefore
+follow the assignment, tuned to sit inside Aragen's cooler palette:
+
+| State | Colour | Provenance |
+|-------|--------|------------|
+| Critical | `#c5453f` / `#e57373` | Aragen's own critical red, contrast-adjusted per theme |
+| Warning | `#b0761c` / `#e8a94e` | Amber rather than the board's orange, to read as yellow |
+| Normal | `#2f8163` / `#5fc49b` | Teal-leaning green, harmonised with the palette |
+| Unknown | `#8892a6` | Aragen "Pending Review", carried over unchanged |
+
+Everything that is not a severity signal — chrome, surfaces, accent, links,
+typography, the mark — follows the board exactly.
+
+**Typography roles**, per the board: Fraunces for headings and the wordmark,
+IBM Plex Sans for UI and body, JetBrains Mono for result values, thresholds and
+data labels. Numbers are rendered with tabular figures so columns align.
