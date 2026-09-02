@@ -1,0 +1,9 @@
+patient_id,test_name,value,unit
+ANON-0417,Hemoglobin,6.1,g/dL
+ANON-0417,Potassium,6.9,mEq/L
+ANON-0417,Sodium,118,mEq/L
+ANON-0417,Glucose,441,mg/dL
+ANON-0417,Platelet Count,38,10^3/uL
+ANON-0417,Creatinine,4.8,mg/dL
+ANON-0417,Calcium,13.6,mg/dL
+ANON-0417,White Blood Cell Count,1.4,10^3/uL

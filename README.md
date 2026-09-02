@@ -73,11 +73,52 @@ AragenHack/
 │  │  └─ reference_ranges.py  clinical range table
 │  └─ tests/
 ├─ frontend/src/
+│  ├─ App.jsx                 shell: navigation, shared analysis state, routes
+│  ├─ pages/                  Analyze · Datasets · Reference ranges · How it works
 │  ├─ components/             LabInput · ResultsDisplay · ResultCard · SeverityBadge
 │  └─ api/client.js           the only module that talks to the backend
 ├─ test_data/                 3 synthetic CSVs
-├─ data/                      Kaggle dataset (git-ignored)
+├─ data/                      the Kaggle dataset (committed; CC0-1.0)
 └─ docs/                      full documentation
+```
+
+## Pages
+
+| Route | Purpose |
+|-------|---------|
+| `/` | Analyze — enter results manually or upload a CSV |
+| `/datasets` | Run any bundled sample file in one click |
+| `/reference` | The clinical threshold table, served over MCP |
+| `/about` | How a verdict is produced, and its limitations |
+
+## The Kaggle dataset
+
+[Laboratory Test Results – Anonymized Dataset](https://www.kaggle.com/datasets/pinar-topuz/lab-test-results)
+(`pinar-topuz/lab-test-results`, CC0-1.0) is committed at
+[`data/lab_test_results_public.csv`](./data/lab_test_results_public.csv) — it is
+3 KB and public domain, so the demo and its validation tests run straight from a
+clone.
+
+Three properties of it shaped the design:
+
+1. **Turkish test names** — `Trombosit`, `Lökosit`, `İnsülin`. Handled by an
+   explicit character fold plus aliases in the reference table.
+2. **Per-row reference intervals** — `Min_Reference` / `Max_Reference`. These
+   take precedence over the built-in table, because a laboratory's own interval
+   is authoritative for its own result.
+3. **Qualitative results** — urinalysis strips reporting `Negatif`, `Normal`,
+   `1+`. Compared as words, not numbers.
+
+The dataset also carries a `Status` column — the laboratory's own verdict. It is
+never fed to the classifier, and
+[`tests/test_kaggle_dataset.py`](./backend/tests/test_kaggle_dataset.py)
+checks our classification against it: **27 rows, 0 unclassified, 0
+disagreements.**
+
+Run just that check:
+
+```bash
+cd backend && pytest tests/test_kaggle_dataset.py -v
 ```
 
 ## Documentation
@@ -102,11 +143,13 @@ AragenHack/
 
 ## Status
 
-Scaffolding complete. Implementation in progress.
+End-to-end working. **217 backend tests passing.**
 
 - [x] Project structure, docs, tooling
-- [ ] MCP server: reference ranges + classification
-- [ ] Agent: MCP client wiring
-- [ ] Gemini explanation layer
-- [ ] React UI
-- [ ] Test data + tests
+- [x] MCP server: 4 tools over stdio, 16 lab tests
+- [x] Agent: Classify -> Route -> Explain, entirely over MCP
+- [x] FastAPI: JSON, CSV upload and bundled-dataset endpoints
+- [x] Gemini explanation layer with degraded mode
+- [x] React UI: 4 pages, color-coded results, per-result reasoning
+- [x] Test data: 3 synthetic CSVs
+- [x] Kaggle dataset: parsed, classified and validated against its own Status

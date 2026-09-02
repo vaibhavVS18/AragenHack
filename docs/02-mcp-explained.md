@@ -105,7 +105,7 @@ exact argument schemas at runtime — nothing is hardcoded.
 
 | Primitive | Meaning | Used here? |
 |-----------|---------|------------|
-| **Tools** | Functions the agent can call (actions) | ✅ all three |
+| **Tools** | Functions the agent can call (actions) | ✅ all four |
 | **Resources** | Read-only data the agent can load (like files) | ❌ not needed |
 | **Prompts** | Reusable prompt templates the user can pick | ❌ not needed |
 
@@ -113,7 +113,8 @@ Tools are the only primitive this project needs.
 
 ## 6. Our MCP server
 
-Three tools, each mapping to a step in the assignment's required agent logic:
+Four tools. The first three map onto the assignment's required agent logic;
+the fourth exists so clients can discover the catalogue instead of hardcoding it.
 
 ### `get_reference_range(test_name) -> ReferenceRange`
 Looks up thresholds for a test. Checks the hardcoded table first, then falls
@@ -125,6 +126,12 @@ back to alias resolution and fuzzy matching for messy real-world names
 Calls `get_reference_range` internally, compares the value, returns severity
 plus the full explainability payload: the range used, the deviation, and the
 rule that fired.
+
+### `list_reference_ranges() -> ReferenceRangeTable`
+Returns every test the server can classify, with thresholds, units, category,
+specialty and aliases. Takes no arguments. The React form uses it for
+autocomplete, so the clinical table stays the single source of truth rather
+than being duplicated in the UI.
 
 ### `route_by_severity(results) -> RoutedResults`
 The assignment's Route step. Groups and orders Critical -> Warning -> Normal

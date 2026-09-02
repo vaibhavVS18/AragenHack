@@ -53,7 +53,7 @@ Severity is decided by deterministic comparison against a reference range —
 never by asking the model. This matters for three reasons:
 
 1. **Correctness.** Classification is 30% of the grade and must be exact.
-   `7.2 < 8.0` is not a judgement call.
+   `6.5 < 7.0` is not a judgement call.
 2. **Reproducibility.** Same input always gives the same severity. Testable.
 3. **Safety.** A hallucinated "Normal" on a critical potassium value is the
    kind of failure that makes a clinical tool worse than no tool.

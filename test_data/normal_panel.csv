@@ -1,0 +1,11 @@
+test_name,value,unit
+Hemoglobin,14.2,g/dL
+White Blood Cell Count,7.1,10^3/uL
+Platelet Count,268,10^3/uL
+Glucose,88,mg/dL
+Potassium,4.2,mEq/L
+Sodium,140,mEq/L
+Creatinine,0.9,mg/dL
+Calcium,9.4,mg/dL
+TSH,2.1,uIU/mL
+ALT,24,U/L

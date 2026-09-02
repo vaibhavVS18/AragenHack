@@ -6,7 +6,7 @@ pydantic>=2.9.0
 pydantic-settings>=2.6.0
 
 # ---- MCP (Model Context Protocol) ----
-mcp>=1.2.0                     # official Python SDK: server + client
+mcp>=2.1.0                     # official Python SDK: server + client (v2 API: MCPServer)
 
 # ---- LLM provider ----
 google-genai>=0.8.0            # Gemini SDK (explanation layer)

@@ -18,9 +18,14 @@ dist/
 .env.*
 !.env.example
 
-# ---- Kaggle raw data (large, not committed) ----
+# ---- Kaggle dataset ----
+# The assignment mandates this dataset, and it is CC0-1.0 (public domain) and
+# only a few KB, so it IS committed - a grader can then run the demo and the
+# validation tests straight from a clone.
 data/*
 !data/.gitkeep
+!data/lab_test_results_public.csv
+!data/metadata.json
 
 # ---- Editors / OS ----
 .vscode/

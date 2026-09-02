@@ -26,22 +26,62 @@ Each test defines four thresholds, producing five bands:
 to `low` or `high` is Normal. Stated explicitly because "exactly on the
 boundary" is a classic edge case a grader will test.
 
+## Where the reference range comes from
+
+Three sources, in priority order. Every result reports which was used as
+`range_source`, so a verdict can always be traced to the numbers behind it.
+
+| Priority | Source | `range_source` | Notes |
+|---|---|---|---|
+| 1 | The interval supplied with the result | `supplied` | The Kaggle dataset ships `Min_Reference`/`Max_Reference` per row |
+| 2 | The built-in table below | `internal` | Also the only source of genuine critical thresholds |
+| 3 | Neither | — | Returned uninterpreted and flagged, never guessed |
+
+A laboratory's own interval is authoritative for its own result, so a supplied
+range wins. The dataset has no concept of a panic value, so critical thresholds
+still come from the table where the test is known (`critical_basis: "table"`).
+Where it is not, they are estimated at half the interval width beyond each
+bound and marked `critical_basis: "derived"` — surfaced in the UI as an
+estimate, never presented as a published threshold.
+
+## Qualitative results
+
+Urinalysis strips report words, not numbers: `Negatif`, `Normal`, `1+`. These
+are compared as words after folding to canonical tokens:
+
+```
+Negatif / negative / neg / yok   -> negative
+Pozitif / positive / 1+ .. 4+    -> positive
+Normal                           -> normal
+Eser / trace / iz                -> trace
+```
+
+A match is Normal; a mismatch is Warning. Never Critical — a strip records
+presence, not amount, so on its own it cannot support a claim of immediate
+danger. Results classified this way carry `comparison: "qualitative"`.
+
 ## Reference ranges (adult, general population)
 
-| Test | Unit | crit_low | low | high | crit_high |
-|------|------|---------:|----:|-----:|----------:|
-| Hemoglobin | g/dL | 7.0 | 12.0 | 17.5 | 20.0 |
-| WBC | 10³/µL | 2.0 | 4.5 | 11.0 | 30.0 |
-| Platelets | 10³/µL | 50 | 150 | 450 | 1000 |
-| Glucose (fasting) | mg/dL | 50 | 70 | 99 | 400 |
-| Potassium | mEq/L | 2.5 | 3.5 | 5.1 | 6.5 |
-| Sodium | mEq/L | 120 | 135 | 145 | 160 |
-| Creatinine | mg/dL | — | 0.6 | 1.3 | 4.0 |
-| Calcium | mg/dL | 6.0 | 8.5 | 10.5 | 13.0 |
-| TSH | µIU/mL | 0.1 | 0.4 | 4.0 | 20.0 |
-| ALT | U/L | — | 7 | 56 | 300 |
+| Test | Unit | crit_low | low | high | crit_high | Category |
+|------|------|---------:|----:|-----:|----------:|----------|
+| Hemoglobin | g/dL | 7 | 12 | 17.5 | 20 | Hematology |
+| White Blood Cell Count | 10^3/uL | 2 | 4.5 | 11 | 30 | Hematology |
+| Platelet Count | 10^3/uL | 50 | 150 | 450 | 1000 | Hematology |
+| Red Blood Cell Count | 10^6/uL | 2.5 | 4.2 | 5.9 | — | Hematology |
+| Hematocrit | % | 21 | 36 | 50 | 60 | Hematology |
+| Glucose | mg/dL | 50 | 70 | 99 | 400 | Chemistry |
+| HbA1c | % | — | 4 | 5.7 | 10 | Chemistry |
+| Potassium | mEq/L | 2.5 | 3.5 | 5.1 | 6.5 | Chemistry |
+| Sodium | mEq/L | 120 | 135 | 145 | 160 | Chemistry |
+| Creatinine | mg/dL | — | 0.6 | 1.3 | 4 | Chemistry |
+| Calcium | mg/dL | 6 | 8.5 | 10.5 | 13 | Chemistry |
+| Ferritin | ug/L | — | 15 | 200 | 1000 | Chemistry |
+| TSH | uIU/mL | 0.1 | 0.4 | 4 | 20 | Endocrine |
+| Free T4 | ng/dL | 0.2 | 0.8 | 1.8 | 5 | Endocrine |
+| Insulin | mU/L | — | 2.6 | 24.9 | — | Endocrine |
+| ALT | U/L | — | 7 | 56 | 300 | Liver |
 
-Ten tests; the assignment requires at least five.
+16 tests; the assignment requires at least five. Turkish aliases (Trombosit, Lökosit, Eritrosit, Hematokrit, İnsülin, Serbest T4) are included so the Kaggle dataset resolves against them.
 
 ### Documented assumptions
 
@@ -66,15 +106,27 @@ deterministically and is what makes the result auditable:
 ```json
 {
   "test_name": "Hemoglobin",
-  "value": 7.2,
+  "value": 6.5,
   "unit": "g/dL",
   "severity": "critical",
-  "reference_range": { "low": 12.0, "high": 17.5, "unit": "g/dL" },
+  "band": "critical_low",
+  "reference_range": {
+    "low": 12.0,
+    "high": 17.5,
+    "critical_low": 7.0,
+    "critical_high": 20.0,
+    "unit": "g/dL"
+  },
   "direction": "below",
-  "deviation_pct": 40.0,
-  "deviation_text": "40% below the lower limit of normal",
-  "rule_fired": "value (7.2) < critical_low (7.0) is False; value < low (12.0) is True -> warning_low ... ",
-  "matched_by": "exact"
+  "deviation_pct": 45.8,
+  "deviation_text": "45.8% below the lower limit of normal (12 g/dL)",
+  "rule_fired": "value (6.5) < critical_low (7)",
+  "matched_by": "exact",
+  "unit_assumed": false,
+  "category": "Hematology",
+  "specialty": "hematology",
+  "measures": "oxygen-carrying capacity of the blood",
+  "error": null
 }
 ```
 

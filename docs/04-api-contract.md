@@ -17,6 +17,30 @@ provider is active — useful for confirming setup before a demo.
 }
 ```
 
+## GET /reference_ranges
+
+The clinical catalogue, fetched over MCP via `list_reference_ranges`. The
+frontend uses it for input autocomplete so the UI never hardcodes a test list
+that could drift from the one actually used to classify.
+
+```json
+{
+  "count": 10,
+  "tests": [
+    {
+      "test_name": "Hemoglobin",
+      "unit": "g/dL",
+      "low": 12.0, "high": 17.5,
+      "critical_low": 7.0, "critical_high": 20.0,
+      "category": "Hematology",
+      "specialty": "hematology",
+      "measures": "oxygen-carrying capacity of the blood",
+      "aliases": ["hgb", "hb", "haemoglobin", "blood hemoglobin"]
+    }
+  ]
+}
+```
+
 ## POST /analyze_labs
 
 The assignment's required endpoint.
@@ -65,7 +89,7 @@ The assignment's required endpoint.
     }
   ],
   "errors": [],
-  "meta": { "llm_provider": "gemini", "model": "gemini-2.0-flash", "elapsed_ms": 1840 }
+  "meta": { "llm_provider": "gemini", "model": "gemini-3.5-flash-lite", "elapsed_ms": 1840 }
 }
 ```
 
@@ -108,6 +132,39 @@ Accepted column aliases: `test_name` / `test` / `Test Name` / `analyte`,
 
 Unparseable rows land in `errors` with their line number; the rest still
 process.
+
+## GET /datasets
+
+Lists the sample CSVs bundled with the repository, so the UI can offer
+one-click analysis without a file upload.
+
+```json
+{
+  "datasets": [
+    {
+      "id": "kaggle",
+      "name": "Kaggle - Laboratory Test Results",
+      "description": "The assignment's required dataset...",
+      "source": "pinar-topuz/lab-test-results (CC0-1.0)",
+      "synthetic": false,
+      "available": true,
+      "size_bytes": 3007
+    }
+  ]
+}
+```
+
+## POST /analyze_labs/dataset/{dataset_id}
+
+Runs a bundled dataset through the same pipeline as an upload. Same response
+shape as `/analyze_labs`.
+
+| Status | Cause |
+|--------|-------|
+| `404` | Unknown id, or the file is not present in this checkout |
+
+Ids resolve through a fixed registry and are never joined onto a filesystem
+path, so a traversal attempt is simply an unknown id.
 
 ## Severity vocabulary
 
