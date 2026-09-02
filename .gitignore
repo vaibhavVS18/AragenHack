@@ -31,6 +31,9 @@ data/*
 # Built on demand by POST /report; never a source artifact.
 *.pdf
 !GenAI_FullStack_AssignmentV2.pdf
+# The project overview is documentation, not a generated lab report - it is
+# regenerated from docs/make_overview_pdf.py and committed alongside it.
+!docs/AragenAI-Project-Overview.pdf
 
 # ---- Runtime state ----
 # Written by the app at runtime, never a source artifact.

@@ -14,6 +14,32 @@ Built with **FastAPI · MCP · React · Gemini · Ollama**.
 
 ---
 
+## Features at a glance
+
+| Feature | What it gives you | Built with |
+|---|---|---|
+| **Deterministic classification** | Normal / Warning / Critical from a fixed rule, never from the LLM | MCP tool `classify_lab_result` |
+| **Severity routing** | Results ordered worst-first, with counts | MCP tool `route_by_severity` |
+| **Reference table over MCP** | 16 tests with aliases, units and critical thresholds | MCP tool `list_reference_ranges` |
+| **Written explanations** | What the test measures, what your result means, causes, urgency, next steps, questions for a doctor | Google Gemini `3.5-flash-lite`, one batched call |
+| **Audit trail per result** | The literal comparison that fired, the range used, and where it came from | Python, surfaced in the API response |
+| **PDF report** | The whole panel as a real document — measured tables, row-aware page breaks, `Page X of Y`, Aragen branding | ReportLab (server-side) |
+| **CSV export** | Full result set including ranges and rules | Browser-side, no round trip |
+| **Chat assistant — about the app** | Answers from the repo's own docs, with sources shown | Ollama `qwen2.5:3b` + `nomic-embed-text`, NumPy cosine similarity |
+| **Chat assistant — about your report** | Ask about *your* results in your own words; it quotes your numbers back | Ollama `qwen2.5:3b`, no retrieval — the report is the whole context |
+| **Safety guards** | Medical questions refused in code; greetings answered without a model | Deterministic Python, before the LLM runs |
+| **CSV upload + preview** | See exactly what was parsed before anything is analyzed | FastAPI + `python-multipart` |
+| **Bundled datasets** | Four files runnable in one click, including the real Kaggle set | FastAPI |
+| **Test-name picker** | Names come from the server; unknown names cannot be submitted | React combobox fed by MCP |
+| **Degraded mode** | LLM down? You still get every severity, range and rule | Agent failure policy |
+| **Feedback** | Stored server-side, not posted to a third party with keys in the bundle | FastAPI + JSONL |
+| **Four pages, two themes** | Analyze · Datasets · Reference ranges · How it works | React 19 + Vite 8 |
+
+A two-page PDF summary of all of the above:
+**[docs/AragenAI-Project-Overview.pdf](./docs/AragenAI-Project-Overview.pdf)**
+
+---
+
 ## Contents
 
 - [What it does](#what-it-does)
@@ -436,6 +462,7 @@ the grader may not have.
 | [04 API Contract](./docs/04-api-contract.md) | Endpoints, schemas, error codes |
 | [05 Setup & Run](./docs/05-setup-and-run.md) | Install, configure, verify, troubleshoot |
 | [06 Decision Log](./docs/06-decision-log.md) | Why each design choice was made |
+| [Project Overview (PDF)](./docs/AragenAI-Project-Overview.pdf) | Two-page summary of every feature and tool — regenerate with `docs/make_overview_pdf.py` |
 
 ---
 
