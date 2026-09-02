@@ -12,6 +12,8 @@ Built with **FastAPI · MCP · React · Gemini · Ollama**.
 > exact rule that fired. The LLM's job is to translate that into language a
 > patient can act on, not to make the call.
 
+**▶ [Watch the demo](https://drive.google.com/file/d/1eGKyQDAqSr4_ZIt4bQ8VGHdP7dFEWBSq/view?usp=sharing)**
+
 ---
 
 ## Features at a glance
